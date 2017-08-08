@@ -1,4 +1,8 @@
+# http://blog.luisrei.com/articles/flaskrest.html
+
+
 from collections import deque
+from functools import wraps
 
 import datetime
 import hashlib
@@ -8,7 +12,7 @@ import os
 import shelve
 import threading
 
-from flask import Flask, request
+from flask import Flask, request, Response
 
 import aiml
 
@@ -32,6 +36,18 @@ root {
     }
 }
 """
+
+
+def json_only(func):
+    @wraps(func)
+    def wrapped(*args, **kwargs):
+        print(request.headers)
+        if request.method in ('POST', 'PUT') and request.headers['Content-Type'] != 'application/json':
+            return Response('Unsupported Media Type: %s' % request.headers['Content-Type'], status=415)
+        else:
+            raw_result = func(*args, **kwargs)
+            return Response(raw_result, content_type='application/json; charset=utf-8')
+    return wrapped
 
 
 class ItemLock:
@@ -93,6 +109,8 @@ class DataManager:
             base_folder = os.path.expanduser('~/pyaiml_api')
         if not os.path.isdir(base_folder):
             os.makedirs(base_folder)
+        if not os.path.isdir(os.path.join(base_folder, 'messages')):
+            os.makedirs(os.path.join(base_folder, 'messages'))
 
         self.base_folder = base_folder
 
@@ -109,9 +127,17 @@ class DataManager:
         self.kernel_lock = threading.Lock()
 
         self.kernel = aiml.Kernel()
+
+        load_folder = os.path.dirname(learn[0])
         for item in learn:
             self.kernel.learn(item)
-        self.kernel.respond('load aiml b')
+
+        cwd = os.getcwd()
+        try:
+            os.chdir(load_folder)
+            self.kernel.respond('load aiml b')
+        finally:
+            os.chdir(cwd)
 
     def close(self):
         self.user_locks.acquire()
@@ -121,28 +147,33 @@ class DataManager:
 
         self.users.close()
         self.user_sessions.close()
-        for messages in self.user_message_cache.values():
-            messages.close()
+        for messages_db in self.user_message_cache.values():
+            messages_db.close()
 
-    def get_user_names(self):
+    def get_user_ids(self):
         with self.user_locks:
             return list(self.users)
 
-    def add_user(self, user_name, data, post=False):
+    def add_user(self, user_name, post=False):
+        user_id = hashlib.sha256(user_name.encode()).hexdigest()
         with self.user_locks:
-            if post and user_name in self.users:
-                raise KeyError(user_name)
-            with self.user_locks[user_name]:
-                self.users[user_name] = data
+            if post and user_id in self.users:
+                raise KeyError(user_id)
+            with self.user_locks[user_id]:
+                self.users[user_id] = {
+                    'name': user_name,
+                    'id': user_id
+                }
+        return user_id
 
-    def get_user_data(self, user_name):
-        with self.user_locks[user_name]:
-            return self.users[user_name]
+    def get_user_data(self, user_id):
+        with self.user_locks[user_id]:
+            return self.users[user_id]
 
-    def _get_messages(self, user_name):
-        if user_name in self.user_message_cache:
-            messages = self.user_message_cache[user_name]
-            self.user_message_lru.remove(user_name)
+    def _get_messages(self, user_id):
+        if user_id in self.user_message_cache:
+            messages_db = self.user_message_cache[user_id]
+            self.user_message_lru.remove(user_id)
         else:
             if len(self.user_message_cache) >= self.max_cached_users:
                 lru = self.user_message_lru.popleft()
@@ -153,115 +184,122 @@ class DataManager:
                     self.user_sessions[lru] = session_data
                 with self.kernel_lock:
                     self.kernel.deleteSession(lru)
-            messages = shelve.open(os.path.join(self.base_folder, 'users', user_name + '.db'))
+            messages_db = shelve.open(os.path.join(self.base_folder, 'messages', user_id + '.db'))
             with self.sessions_lock:
-                session_data = self.user_sessions.get(user_name, {})
+                session_data = self.user_sessions.get(user_id, {})
             with self.kernel_lock:
-                self.kernel.setSessionData(session_data, user_name)
-            self.user_message_lru.append(user_name)
-        return messages
+                self.kernel.setSessionData(session_data, user_id)
+            self.user_message_lru.append(user_id)
+        return messages_db
 
-    def get_message_ids(self, user_name):
-        with self.user_locks[user_name]:
-            if user_name not in self.users:
-                raise KeyError(user_name)
-            with self.message_locks[user_name]:
-                return list(self._get_messages(user_name))
+    def get_message_ids(self, user_id):
+        with self.user_locks[user_id]:
+            if user_id not in self.users:
+                raise KeyError(user_id)
+            with self.message_locks[user_id]:
+                return list(self._get_messages(user_id))
 
-    def add_message(self, user_name, content):
+    def add_message(self, user_id, content):
         timestamp = datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S.%f')
         message_id = 'c' + hashlib.sha256(timestamp.encode()).hexdigest()
-        with self.user_locks[user_name]:
-            if user_name not in self.users:
-                raise KeyError(user_name)
-            with self.message_locks[user_name]:
-                messages = self._get_messages(user_name)
-                messages[message_id] = {
+        with self.user_locks[user_id]:
+            if user_id not in self.users:
+                raise KeyError(user_id)
+            with self.message_locks[user_id]:
+                messages_db = self._get_messages(user_id)
+                messages_db[message_id] = {
                     'id': message_id,
                     'origin': 'client',
                     'content': content,
                     'timestamp': timestamp,
                 }
             with self.kernel_lock:
-                response = self.kernel.respond(content, user_name)
-                session_data = self.kernel.getSessionData(user_name)
+                response = self.kernel.respond(content, user_id)
+                session_data = self.kernel.getSessionData(user_id)
             with self.sessions_lock:
-                self.user_sessions[user_name] = session_data
+                self.user_sessions[user_id] = session_data
+            print("Response:", repr(response))
             if response:
                 timestamp = datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S.%f')
-                message_id = 's' + hashlib.sha256(timestamp.encode()).hexdigest()
-                message_data = {
-                    'id': message_id,
+                response_id = 's' + hashlib.sha256(timestamp.encode()).hexdigest()
+                response_data = {
+                    'id': response_id,
                     'origin': 'server',
                     'content': response,
                     'time': timestamp,
                 }
-                with self.message_locks[user_name]:
-                    messages[message_id] = message_data
-                return message_id
+                with self.message_locks[user_id]:
+                    messages_db[response_id] = response_data
+            else:
+                response_id = None
+            return message_id, response_id
 
-    def get_message_data(self, user_name, message_id):
-        with self.user_locks[user_name]:
-            if user_name not in self.users:
-                raise KeyError(user_name)
-            with self.message_locks[user_name]:
-                messages = self._get_messages(user_name)
-                return messages[message_id]
+    def get_message_data(self, user_id, message_id):
+        with self.user_locks[user_id]:
+            if user_id not in self.users:
+                raise KeyError(user_id)
+            with self.message_locks[user_id]:
+                messages_db = self._get_messages(user_id)
+                return messages_db[message_id]
 
 
 # TODO: Make the std-startup.xml path dynamic.
-data_manager = DataManager('../pyaiml/std-startup.xml')
+xml_path = '../pyaiml/std-startup.xml'
+data_manager = DataManager(xml_path)
 
 
 @app.route('/user/', methods=['GET', 'POST', 'PUT'])
+@json_only
 def users():
     if request.method == 'GET':
         try:
-            user_names = data_manager.get_user_names()
+            user_ids = data_manager.get_user_ids()
         except Exception:
             log.error("Error in users() (GET):")
             return json.dumps({'type': 'error', 'value': 'Server-side error.'})
         else:
-            return json.dumps({'type': 'user_list', 'value': user_names})
+            return json.dumps({'type': 'user_list', 'value': user_ids})
     else:
         assert request.method in ('POST', 'PUT')
         user_data = request.get_json()
-        if 'name' not in user_data or len(user_data) > 1:
+        if not isinstance(user_data, dict) or 'name' not in user_data or len(user_data) > 1:
             return json.dumps({'type': 'error', 'value': 'Malformed request.'})
         user_name = user_data['name']
         try:
-            data_manager.add_user(user_name, user_data, post=(request.method == 'POST'))
+            user_id = data_manager.add_user(user_name, post=(request.method == 'POST'))
         except KeyError:
             return json.dumps({'type': 'error', 'value': 'User name already exists.'})
         except Exception:
-            log.error("Error in users() (%s):" % request.method)
+            log.exception("Error in users() (%s):" % request.method)
             return json.dumps({'type': 'error', 'value': 'Server-side error.'})
         else:
-            return json.dumps({'type': 'created', 'value': 'user'})
+            return json.dumps({'type': 'created_user', 'id': user_id})
 
 
-@app.route('/user/<user_name>')
-def user(user_name):
+@app.route('/user/<user_id>/')
+@json_only
+def user(user_id):
     try:
-        user_data = data_manager.get_user_data(user_name)
+        user_data = data_manager.get_user_data(user_id)
     except KeyError:
         return json.dumps({'type': 'error', 'value': 'User not found.'})
     except Exception:
-        log.error("Error in user(%r) (GET):" % user_name)
+        log.exception("Error in user() (GET):")
         return json.dumps({'type': 'error', 'value': 'Server-side error.'})
     else:
         return json.dumps({'type': 'user', 'value': user_data})
 
 
-@app.route('/user/<user_name>/message/', methods=['GET', 'POST'])
-def messages(user_name):
+@app.route('/user/<user_id>/message', methods=['GET', 'POST'])
+@json_only
+def messages(user_id):
     if request.method == 'GET':
         try:
-            message_ids = data_manager.get_message_ids(user_name)
+            message_ids = data_manager.get_message_ids(user_id)
         except KeyError:
             return json.dumps({'type': 'error', 'value': 'User not found.'})
         except Exception:
-            log.error("Error in messages(%r) (GET):" % user_name)
+            log.exception("Error in messages(%r) (GET):" % user_id)
             return json.dumps({'type': 'error', 'value': 'Server-side error.'})
         else:
             return json.dumps({'type': 'message_list', 'value': message_ids})
@@ -269,7 +307,7 @@ def messages(user_name):
         assert request.method == 'POST'
         message_data = request.get_json()
         if not (isinstance(message_data, dict) and message_data.get('origin', 'client') == 'client' and
-                'content' in message_data and message_data - {'origin', 'content'}):
+                'content' in message_data and not message_data.keys() - {'origin', 'content'}):
             return json.dumps({'type': 'error', 'value': 'Malformed request.'})
         content = message_data['content']
         if not isinstance(content, str):
@@ -279,33 +317,25 @@ def messages(user_name):
             return json.dumps({'type': 'error', 'value': 'Empty message content.'})
 
         try:
-            response_id = data_manager.add_message(user_name, content)
+            message_id, response_id = data_manager.add_message(user_id, content)
         except KeyError:
             return json.dumps({'type': 'error', 'value': 'User not found.'})
         except Exception:
-            log.error("Error in messages(%r) (%s):" % (user_name, request.method))
+            log.exception("Error in messages(%r) (%s):" % (user_id, request.method))
             return json.dumps({'type': 'error', 'value': 'Server-side error.'})
 
-        if response_id is None:
-            return json.dumps({'type': 'message', 'value': None})
-        else:
-            try:
-                message_data = data_manager.get_message_data(user_name, response_id)
-            except Exception:
-                log.error("Error in messages(%r) (%s):" % (user_name, request.method))
-                return json.dumps({'type': 'error', 'value': 'Server-side error.'})
-            else:
-                return json.dumps({'type': 'message', 'value': message_data})
+        return json.dumps({'type': 'message_received', 'id': message_id, 'response_id': response_id})
 
 
-@app.route('/user/<user_name>/message/<message_id>')
-def message(user_name, message_id):
+@app.route('/user/<user_id>/message/<message_id>/')
+@json_only
+def message(user_id, message_id):
     try:
-        message_data = data_manager.get_message_data(user_name, message_id)
+        message_data = data_manager.get_message_data(user_id, message_id)
     except KeyError:
         return json.dumps({'type': 'error', 'value': 'Message not found.'})
     except Exception:
-        log.error("Error in message(%r, %r) (GET):" % (user_name, message_id))
+        log.exception("Error in message(%r, %r) (GET):" % (user_id, message_id))
         return json.dumps({'type': 'error', 'value': 'Server-side error.'})
     else:
         return json.dumps({'type': 'message', 'value': message_data})
