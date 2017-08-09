@@ -230,21 +230,18 @@ class LockSet:
 
 class DataManager:
 
-    def __init__(self, learn, base_folder=None):
-        if isinstance(learn, str):
-            learn = [learn]
+    def __init__(self, learn=None, commands=None, data_folder=None):
+        if data_folder is None:
+            data_folder = os.path.expanduser('~/pyaiml_api')
+        if not os.path.isdir(data_folder):
+            os.makedirs(data_folder)
+        if not os.path.isdir(os.path.join(data_folder, 'messages')):
+            os.makedirs(os.path.join(data_folder, 'messages'))
 
-        if base_folder is None:
-            base_folder = os.path.expanduser('~/pyaiml_api')
-        if not os.path.isdir(base_folder):
-            os.makedirs(base_folder)
-        if not os.path.isdir(os.path.join(base_folder, 'messages')):
-            os.makedirs(os.path.join(base_folder, 'messages'))
+        self.data_folder = data_folder
 
-        self.base_folder = base_folder
-
-        self.users = shelve.open(os.path.join(base_folder, 'users.db'))
-        self.user_sessions = shelve.open(os.path.join(base_folder, 'user_sessions.db'))
+        self.users = shelve.open(os.path.join(data_folder, 'users.db'))
+        self.user_sessions = shelve.open(os.path.join(data_folder, 'user_sessions.db'))
 
         self.user_message_cache = {}
         self.user_message_lru = deque()
@@ -256,17 +253,7 @@ class DataManager:
         self.kernel_lock = threading.Lock()
 
         self.kernel = aiml.Kernel()
-
-        load_folder = os.path.dirname(learn[0])
-        for item in learn:
-            self.kernel.learn(item)
-
-        cwd = os.getcwd()
-        try:
-            os.chdir(load_folder)
-            self.kernel.respond('load aiml b')
-        finally:
-            os.chdir(cwd)
+        self.kernel.bootstrap(learnFiles=learn, commands=commands)
 
     def __del__(self):
         self.close()
@@ -316,7 +303,7 @@ class DataManager:
                     self.user_sessions[lru] = session_data
                 with self.kernel_lock:
                     self.kernel.deleteSession(lru)
-            messages_db = shelve.open(os.path.join(self.base_folder, 'messages', user_id + '.db'))
+            messages_db = shelve.open(os.path.join(self.data_folder, 'messages', user_id + '.db'))
             with self.sessions_lock:
                 session_data = self.user_sessions.get(user_id, {})
             with self.kernel_lock:
@@ -375,12 +362,7 @@ class DataManager:
                 return messages_db[message_id]
 
 
-# TODO: Make the std-startup.xml path dynamic.
-xml_path = '../pyaiml/std-startup.xml'
-data_manager = DataManager(xml_path)
-print(len(data_manager.get_user_ids()))
-for user_id in data_manager.get_user_ids():
-    print(user_id, data_manager.get_user_data(user_id)['name'])
+data_manager = DataManager()
 
 
 @app.route('/user/', methods=['GET', 'POST'])
