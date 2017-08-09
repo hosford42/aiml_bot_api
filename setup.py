@@ -9,5 +9,8 @@ setup(
     author='Aaron Hosford',
     author_email='aaron.hosford@ericsson.com',
     description='Json API to pyaiml bot',
-    install_requires=['flask']
+    install_requires=[
+        'flask',
+        'flask_graphql'
+    ]
 )
