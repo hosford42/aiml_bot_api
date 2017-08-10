@@ -1,1 +1,2 @@
-FLASK_APP=pyaiml_api.py flask run
+#!/usr/bin/env bash
+FLASK_APP=aiml_bot_api.py flask run

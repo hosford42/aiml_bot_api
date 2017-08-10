@@ -26,7 +26,7 @@ from graphene import resolve_only_args
 import flask_graphql
 
 
-import aiml
+import aiml_bot
 
 
 log = logging.getLogger(__name__)
@@ -232,7 +232,7 @@ class DataManager:
 
     def __init__(self, learn=None, commands=None, data_folder=None):
         if data_folder is None:
-            data_folder = os.path.expanduser('~/pyaiml_api')
+            data_folder = os.path.expanduser('~/aiml_bot_api')
         if not os.path.isdir(data_folder):
             os.makedirs(data_folder)
         if not os.path.isdir(os.path.join(data_folder, 'messages')):
@@ -250,10 +250,9 @@ class DataManager:
         self.user_locks = LockSet()
         self.message_locks = LockSet()
         self.sessions_lock = threading.Lock()
-        self.kernel_lock = threading.Lock()
+        self.bot_lock = threading.Lock()
 
-        self.kernel = aiml.Kernel()
-        self.kernel.bootstrap(learn=learn, commands=commands)
+        self.bot = aiml_bot.Bot(learn=learn, commands=commands)
 
     def __del__(self):
         self.close()
@@ -262,7 +261,7 @@ class DataManager:
         self.user_locks.acquire()
         self.message_locks.acquire()
         self.sessions_lock.acquire()
-        self.kernel_lock.acquire()
+        self.bot_lock.acquire()
 
         self.users.close()
         self.user_sessions.close()
@@ -297,17 +296,17 @@ class DataManager:
             if len(self.user_message_cache) >= self.max_cached_users:
                 lru = self.user_message_lru.popleft()
                 self.user_message_cache.pop(lru).close()
-                with self.kernel_lock:
-                    session_data = self.kernel.get_session_data(lru)
+                with self.bot_lock:
+                    session_data = self.bot.get_session_data(lru)
                 with self.sessions_lock:
                     self.user_sessions[lru] = session_data
-                with self.kernel_lock:
-                    self.kernel.delete_session(lru)
+                with self.bot_lock:
+                    self.bot.delete_session(lru)
             messages_db = shelve.open(os.path.join(self.data_folder, 'messages', user_id + '.db'))
             with self.sessions_lock:
                 session_data = self.user_sessions.get(user_id, {})
-            with self.kernel_lock:
-                self.kernel.set_session_data(session_data, user_id)
+            with self.bot_lock:
+                self.bot.set_session_data(session_data, user_id)
             self.user_message_lru.append(user_id)
         return messages_db
 
@@ -332,9 +331,9 @@ class DataManager:
                     'content': content,
                     'time': timestamp,
                 }
-            with self.kernel_lock:
-                response = self.kernel.respond(content, user_id)
-                session_data = self.kernel.get_session_data(user_id)
+            with self.bot_lock:
+                response = self.bot.respond(content, user_id)
+                session_data = self.bot.get_session_data(user_id)
             with self.sessions_lock:
                 self.user_sessions[user_id] = session_data
             print("Response:", repr(response))

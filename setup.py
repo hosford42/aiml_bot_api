@@ -1,16 +1,18 @@
 from setuptools import setup
 
 setup(
-    name='pyaiml_api',
+    name='aiml_bot_api',
     version='0.0',
-    packages=['pyaiml_api'],
+    packages=['aiml_bot_api'],
     url='',
     license='MIT',
     author='Aaron Hosford',
     author_email='aaron.hosford@ericsson.com',
-    description='Json API to pyaiml bot',
+    description='Json API to AIML Bot',
     install_requires=[
         'flask',
-        'flask_graphql'
+        'flask_graphql',
+        'graphene',
+        'aiml_bot'
     ]
 )
