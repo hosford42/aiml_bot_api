@@ -65,7 +65,8 @@ def get_long_description():
             # pandoc, you rock...
             rst_content = convert_file(md_path, 'rst')
             with open(rst_path, 'w') as rst_file:
-                rst_file.write(rst_content)
+                for line in rst_content.splitlines(keepends=False):
+                    rst_file.write(line + '\n')
         except Exception:
             try:
                 # noinspection PyUnresolvedReferences,PyPackageRequirements
@@ -78,7 +79,8 @@ def get_long_description():
                 # pandoc, you rock...
                 rst_content = convert_file(md_path, 'rst')
                 with open(rst_path, 'w') as rst_file:
-                    rst_file.write(rst_content)
+                    for line in rst_content.splitlines(keepends=False):
+                        rst_file.write(line + '\n')
 
     if os.path.isfile(rst_path):
         with open(rst_path) as rst_file:
@@ -95,7 +97,7 @@ setup(
     author='Aaron Hosford',
     author_email='aaron.hosford@ericsson.com',
     license='MIT',
-    description='Json API to AIML Bot',
+    description='GraphQL API to AIML Bot',
     long_description=get_long_description(),
     url='https://github.com/hosford42/aiml_bot_api',
 
