@@ -38,6 +38,56 @@ A JSON endpoint for retrieving information about a specific message.
 
 
 from setuptools import setup
+import os
+import warnings
+
+
+def get_long_description():
+    """Load the long description from the README file. In the process,
+    convert the README from .md to .rst using Pandoc, if possible."""
+    rst_path = os.path.join(os.path.dirname(__file__), 'README.rst')
+    md_path = os.path.join(os.path.dirname(__file__), 'README.md')
+
+    try:
+        # Imported here to avoid creating a dependency in the setup.py
+        # if the .rst file already exists.
+
+        # noinspection PyUnresolvedReferences,PyPackageRequirements
+        from pypandoc import convert_file
+    except ImportError:
+        warnings.warn("Module pypandoc not installed. Unable to generate README.rst.")
+    else:
+        # First, try to use convert_file, assuming Pandoc is already installed.
+        # If that fails, try to download & install it, and then try to convert
+        # again.
+        # noinspection PyBroadException
+        try:
+            # pandoc, you rock...
+            rst_content = convert_file(md_path, 'rst')
+            with open(rst_path, 'w') as rst_file:
+                rst_file.write(rst_content)
+        except Exception:
+            try:
+                # noinspection PyUnresolvedReferences,PyPackageRequirements
+                from pypandoc.pandoc_download import download_pandoc
+
+                download_pandoc()
+            except FileNotFoundError:
+                warnings.warn("Unable to download & install pandoc. Unable to generate README.rst.")
+            else:
+                # pandoc, you rock...
+                rst_content = convert_file(md_path, 'rst')
+                with open(rst_path, 'w') as rst_file:
+                    rst_file.write(rst_content)
+
+    if os.path.isfile(rst_path):
+        with open(rst_path) as rst_file:
+            return rst_file.read()
+    else:
+        # It will be messy, but it's better than nothing...
+        with open(md_path) as md_file:
+            return md_file.read()
+
 
 setup(
     name='AIML Bot API',
@@ -46,7 +96,7 @@ setup(
     author_email='aaron.hosford@ericsson.com',
     license='MIT',
     description='Json API to AIML Bot',
-    long_description=__doc__,
+    long_description=get_long_description(),
     url='https://github.com/hosford42/aiml_bot_api',
 
     platforms=["any"],
