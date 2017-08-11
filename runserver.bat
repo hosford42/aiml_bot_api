@@ -1,2 +1,2 @@
-SET FLASK_APP=aiml_bot_api.py
+SET FLASK_APP=aiml_bot_api
 flask run
