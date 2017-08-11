@@ -11,23 +11,23 @@ API has access to the entire data set.
 
 The following endpoints are provided:
 
-### /
+### `/`
 
 The GraphQL endpoint is the preferred method for interacting with the system.
 
-### /users
+### `/users`
 
 A JSON endpoint for listing registered users or adding a new user.
 
-### /users/<user_id>
+### `/users/<user_id>`
 
 A JSON endpoint for retrieving information about a specific user.
 
-### /users/<user_id>/messages
+### `/users/<user_id>/messages`
 
 A JSON endpoint for listing the messages to/from a user or sending
 a new message to the bot.
 
-### /users/<user_id>/messages/<message_id>
+### `/users/<user_id>/messages/<message_id>`
 
 A JSON endpoint for retrieving information about a specific message.
