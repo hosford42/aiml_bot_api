@@ -95,7 +95,7 @@ setup(
     name='AIML Bot API',
     version='0.0',
     author='Aaron Hosford',
-    author_email='aaron.hosford@ericsson.com',
+    author_email='hosford42@gmail.com',
     license='MIT',
     description='GraphQL API to AIML Bot',
     long_description=get_long_description(),
